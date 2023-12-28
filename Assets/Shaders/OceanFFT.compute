@@ -1,0 +1,70 @@
+// Each #kernel tells which function to compile; you can have many kernels
+#pragma kernel CreateInitialSpectrum
+#pragma kernel CalculateConjugateSpectrum
+
+#define PI 3.14159265358979323846
+
+
+// Create a RenderTexture with enableRandomWrite flag and set it
+// with cs.SetTexture
+RWTexture2D<float4> _InitialSpectrumTexture;
+RWTexture2D<float4> _DisplacementTexture;
+RWTexture2D<float2> _SlopeTexture;
+
+RWTexture2D<float2> _h0k;
+
+uint _N;
+
+float hash(uint n)
+{
+    // integer hash copied from Hugo Elias (copied from Acerola!)
+	n = (n << 13U) ^ n;
+	n = n * (n * n * 15731U + 0x789221U) + 0x1376312589U;
+	return float(n & uint(0x7fffffffU)) / float(0x7fffffff);
+}
+
+float2 SampleGauss(float u1, float u2)
+{
+	float R = sqrt(-2.0f * log(u1));
+	float theta = 2.0f * PI * u2;
+
+	return float2(R * cos(theta), R * sin(theta));
+}
+
+[numthreads(8,8,1)]
+void CreateInitialSpectrum (uint3 id : SV_DispatchThreadID)
+{
+	float halfN = _N / 2.0;
+	float2 k = (id.xy - halfN);
+	
+	float seed = id.x + _N * id.y + _N;
+	float random = hash(seed);
+	
+	float4 sample = float4(random, hash(random), hash(random + 1), hash(random + 2));
+	
+	float gauss1 = SampleGauss(sample.x, sample.y);
+	float gauss2 = SampleGauss(sample.z, sample.w);
+	
+	float L = (100.0 / 9.81);
+	float kLength = length(k);
+	float kLength2 = kLength * kLength;
+	float kLength4 = kLength2 * kLength2;
+	
+	float2 windDir = normalize(float2(1.0, 1.0));
+	
+	float cosineFactor = dot(k, windDir);
+	float phillips = exp(-1.0 / (kLength2)) / kLength4 * cosineFactor * exp(-kLength2 * L * 0.001 * 0.001);
+	
+	// overall this is a complex number, which is actually a 2D vector
+	_h0k[id.xy] = float2(gauss1, gauss2) * sqrt(phillips / 2.0);
+}
+
+[numthreads(8,8,1)]
+void CalculateConjugateSpectrum (uint3 id  : SV_DispatchThreadID)
+{
+	float2 h0k = _h0k[id.xy];
+	float2 h0_minus_k = _h0k[uint2((_N - id.x) % _N, (_N - id.y) %_N)];
+	_InitialSpectrumTexture[id.xy] = float4(h0k.x, h0k.y, h0_minus_k.x, -h0_minus_k.y);
+}
+
+

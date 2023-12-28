@@ -15,10 +15,12 @@ Shader "Custom/Waves"
         _specularShine ("Shininess", Range(0, 100)) = 14.0
         _FresnelShine ("Fresnel Shininess",  Range(0, 100)) = 14.0
         _ReflectionStrength("Reflection Strength", Range(0, 10)) = 0.0
-        _ReflectionOffset("Reflection Offset", Range(-1, 1)) = 0.0
+        _ReflectionOffset("Reflection Offset", Range(-5, 5)) = 0.0
         _Waves ("Waves", Float) = 1.0
         _Octaves ("Octaves", Float) = 1.0
+        _AmbientStrength("Ambient Strength", Range(0, 2)) = 1.0
         _NormalBias ("Normal Bias", Range(0, 10)) = 5.0
+        _ShineNormalBias("Shine Normal Bias", Range(0, 5)) = 1.0
         _FreqChange ("Freq Change", Float) = 1.18
         _AmpChange ("Amp Change", Float) = 0.60
         _WavelengthChange ("Wavelength Change", Float) = 0.67
@@ -53,29 +55,30 @@ Shader "Custom/Waves"
 
         fixed4 _Color, _Light, _AmbientColor, _FresnelColor, _SunColor;
         float _Amplitude, _Wavelength, _Speed, _specularShine, _FresnelShine, _ReflectionStrength, _NormalBias, _ReflectionOffset,
-              _FreqChange, _AmpChange, _WavelengthChange;
+              _FreqChange, _AmpChange, _WavelengthChange, _ShineNormalBias, _AmbientStrength;
         half _Waves, _Octaves;
 
         half4 LightingWater (SurfaceOutput s, half3 lightDir, half3 viewDir, half atten) {
+            half3 fresLight = normalize(half3(10.0, 10.0, 10.0));
             float4 lightColor = _Light;
 
             // viewIndependentColor color section
+            float3 shineNormal = normalize(s.Normal * _NormalBias);
 
-            float ambientStrength = 0.25;
+            float ambientStrength = _AmbientStrength;
             float3 ambient = _AmbientColor * ambientStrength;
 
-            float diff = max(dot(s.Normal, lightDir), 0.0) * 0.50;
+            float diff = max(dot(s.Normal, lightDir), 0.0);
             float3 diffuse = diff * lightColor;
 
             float3 viewIndependentColor = (ambient + (diffuse * diffuse)) * s.Albedo;
 
             // viewDependentColor color section
-
+            //float3 shineNormal = normalize(s.Normal * _NormalBias);
             half3 halfwayDir = normalize(lightDir + viewDir);
-
             
             float shininess = _specularShine;
-            float nh = max(0.0, dot(s.Normal, halfwayDir));
+            float nh = max(0.0, dot(shineNormal, halfwayDir));
             float spec = pow(nh, shininess * shininess);
 
             // blinn phong
@@ -86,20 +89,18 @@ Shader "Custom/Waves"
             float3 highlights = lightColor.rgb * spec;
             
             // reflection + fresnel
-            float3 reflectionNormal = normalize(s.Normal + float3(0.0, _NormalBias, 0.0));
-            float3 reflect = -viewDir + 2 * (dot(reflectionNormal, viewDir)) * reflectionNormal;
+            float3 reflectionNormal = normalize(s.Normal + float3(0.0, _ReflectionOffset, 0.0)) * _ShineNormalBias;
+            float3 reflect = -viewDir + 2 * (dot(viewDir, reflectionNormal)) * reflectionNormal;
             float3 cubeMapColor = texCUBE(_Cube, reflect).rgb;
-            float3 additionalDiffuse = dot(reflectionNormal, viewDir) * 0.5 + 0.5;
 
             float3 sun = _SunColor * pow(max(0.0f, DotClamped(reflect, lightDir)), 500.0f);
 
-            float fdot = 1 - dot(viewDir, s.Normal);
+            float fdot = 1 - dot(reflectionNormal, viewDir);
             float fresnelSpec = pow(fdot, _FresnelShine);
 
-			float3 fresnel = cubeMapColor.rgb * additionalDiffuse * fresnelSpec * _FresnelColor;
+			float3 fresnel = cubeMapColor.rgb * fresnelSpec;
 			fresnel += sun * fresnelSpec;
             fresnel *= _ReflectionStrength;
-            fresnel += _ReflectionOffset;
             //fresnel += 0.4;
             //fresnel *= 2.3;
 
@@ -147,6 +148,8 @@ Shader "Custom/Waves"
 
         void vert(inout appdata_full vertexData) {
             float3 p = vertexData.vertex.xyz;
+            float3 worldp = mul(unity_ObjectToWorld, vertexData.vertex);
+
             float dx = 0.0;
             float dz = 0.0;
             float2 prevPartial = float2(0.0, 0.0);
@@ -162,7 +165,7 @@ Shader "Custom/Waves"
                                     _Amplitude * 2.0 * randAmp, 
                                     _Speed * randSpeed);
 
-                p.y += FBMSineWave(wave, p, dx, dz, prevPartial, i, hash);
+                p.y += FBMSineWave(wave, worldp, dx, dz, prevPartial, i, hash);
             }
 
             float3 tangent = float3(1.0, 0.0, dx);
